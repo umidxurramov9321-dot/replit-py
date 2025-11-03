@@ -1,0 +1,170 @@
+def money_transfer_calculator(update: Update, context: CallbackContext):
+    """HAQIQIY PUL YUBORISH KALKULYATORI - SO'M va DOLLAR UCHUN"""
+    text = update.message.text.upper().strip()
+    
+    try:
+        # Miqdorni topish
+        amount_match = re.search(r'(\d+[\d\s]*)', text.replace(',', '').replace(' ', ''))
+        if not amount_match:
+            update.message.reply_text("❌ Miqdorni to'g'ri kiriting. Misol: `400$`, `2000 dollar`, `1000000 so'm`, `5 million`", parse_mode='Markdown')
+            return
+        
+        amount = float(amount_match.group(1))
+        
+        # "million" so'zini tekshirish
+        if 'MILLION' in text or 'MLN' in text or 'MN' in text:
+            amount = amount * 1000000
+        
+        # Valyutani aniqlash
+        if '$' in text or 'USD' in text or 'DOLLAR' in text:
+            # DOLLAR -> RUBL -> SO'M
+            currency_type = 'USD'
+            amount_usd = amount
+            usd_to_rub = get_real_usd_rate()
+            amount_rub = amount_usd * usd_to_rub
+            
+        elif 'SOʻM' in text or 'SUM' in text or 'UZS' in text or 'SOOM' in text:
+            # SO'M -> RUBL
+            currency_type = 'UZS'
+            amount_uzs = amount
+            rates = get_all_real_rates()
+            if not rates:
+                update.message.reply_text("❌ Kurslarni olishda xatolik.")
+                return
+            
+            best_rate = max(rates, key=lambda x: x['UZS_TO_RUB'])
+            amount_rub = amount_uzs * best_rate['UZS_TO_RUB']
+            amount_usd = amount_rub / usd_to_rub if 'usd_to_rub' in locals() else amount_rub / 92.0
+            
+        elif 'RUB' in text or 'RUBL' in text or 'RUBLE' in text:
+            # RUBL -> SO'M
+            currency_type = 'RUB'
+            amount_rub = amount
+            amount_usd = amount_rub / get_real_usd_rate()
+            
+        else:
+            # Agar valyuta ko'rsatilmagan bo'lsa, so'm deb hisoblaymiz
+            currency_type = 'UZS'
+            amount_uzs = amount
+            rates = get_all_real_rates()
+            if not rates:
+                update.message.reply_text("❌ Kurslarni olishda xatolik.")
+                return
+            
+            best_rate = max(rates, key=lambda x: x['UZS_TO_RUB'])
+            amount_rub = amount_uzs * best_rate['UZS_TO_RUB']
+            amount_usd = amount_rub / get_real_usd_rate()
+        
+        # HAQIQIY KURSLARNI OLISH
+        usd_to_rub = get_real_usd_rate()
+        rates = get_all_real_rates()
+        
+        if not rates:
+            update.message.reply_text("❌ Kurslarni olishda xatolik. Iltimos, keyinroq urinib ko'ring.")
+            return
+        
+        message = f"""
+💰 *PUL YUBORISH KALKULYATORI - HAQIQIY KURSLAR*
+
+"""
+
+        # Kirish ma'lumotlari
+        if currency_type == 'USD':
+            message += f"""
+💵 *Kiriting:* {amount_usd:,.0f} USD
+💱 *USD/RUB kursi:* 1 USD = {usd_to_rub:.2f} RUB
+🇷🇺 *Rossiyada:* {amount_rub:,.0f} RUB
+🇺🇿 *O'zbekistonda:* {amount_rub * max(r['RUB_TO_UZS'] for r in rates):,.0f} SO'M
+"""
+        elif currency_type == 'UZS':
+            message += f"""
+🇺🇿 *Kiriting:* {amount:,.0f} SO'M
+🇷🇺 *Rossiyada:* {amount_rub:,.2f} RUB
+💵 *AQSHda:* {amount_usd:,.2f} USD
+💱 *Eng yaxshi kurs:* 1 SO'M = {max(r['UZS_TO_RUB'] for r in rates):.6f} RUB
+"""
+        else:  # RUBL
+            message += f"""
+🇷🇺 *Kiriting:* {amount:,.0f} RUB
+🇺🇿 *O'zbekistonda:* {amount_rub * max(r['RUB_TO_UZS'] for r in rates):,.0f} SO'M
+💵 *AQSHda:* {amount_usd:,.2f} USD
+"""
+
+        message += f"""
+---
+
+📊 *BARCHA TIZIMLAR BO'YICHA HISOBOT:*
+"""
+
+        # Har bir tizim uchun HAQIQIY hisob
+        if currency_type == 'USD' or currency_type == 'RUB':
+            # USD yoki RUB -> UZS
+            best_system = max(rates, key=lambda x: x['RUB_TO_UZS'])
+            
+            for rate in sorted(rates, key=lambda x: x['RUB_TO_UZS'], reverse=True):
+                system_uzs = amount_rub * rate['RUB_TO_UZS']
+                commission_percent = float(rate['commission'].replace('%', '')) / 100
+                system_final = system_uzs * (1 - commission_percent)
+                
+                message += f"""
+💸 *{rate['source']}* {'⭐' if rate == best_system else ''}
+• {amount_rub:,.0f} RUB → *{system_uzs:,.0f}* UZS
+• Komissiyadan keyin: *{system_final:,.0f}* UZS
+• Million so'm: *{system_final/1000000:.2f}M*
+• Kurs: 1 RUB = {rate['RUB_TO_UZS']} UZS
+• Komissiya: {rate['commission']}
+"""
+        
+        else:  # UZS -> RUB
+            # SO'M -> RUBL
+            best_system = max(rates, key=lambda x: x['UZS_TO_RUB'])
+            
+            for rate in sorted(rates, key=lambda x: x['UZS_TO_RUB'], reverse=True):
+                system_rub = amount * rate['UZS_TO_RUB']
+                commission_percent = float(rate['commission'].replace('%', '')) / 100
+                system_final = system_rub * (1 - commission_percent)
+                
+                message += f"""
+💸 *{rate['source']}* {'⭐' if rate == best_system else ''}
+• {amount:,.0f} UZS → *{system_rub:,.2f}* RUB
+• Komissiyadan keyin: *{system_final:,.2f}* RUB
+• Kurs: 1 UZS = {rate['UZS_TO_RUB']:.6f} RUB
+• Komissiya: {rate['commission']}
+"""
+
+        message += f"""
+---
+
+🎯 *TAVSIYALAR:*
+"""
+
+        if currency_type == 'USD':
+            message += f"""
+🥇 *Eng ko'p pul:* **{best_system['source']}** ({amount_rub * best_system['RUB_TO_UZS']:,.0f} UZS)
+⚡ *Eng tez:* **Тезda** (3 daqiqa)
+🏦 *Eng ishonchli:* **ЮMoney** (Yandex)
+"""
+        elif currency_type == 'UZS':
+            message += f"""
+🥇 *Eng ko'p rubl:* **{best_system['source']}** ({amount * best_system['UZS_TO_RUB']:,.2f} RUB)
+⚡ *Eng tez:* **Тезda** (3 daqiqa)  
+🏦 *Eng ishonchli:* **ЮMoney** (Yandex)
+"""
+        else:  # RUBL
+            message += f"""
+🥇 *Eng ko'p so'm:* **{best_system['source']}** ({amount_rub * best_system['RUB_TO_UZS']:,.0f} UZS)
+⚡ *Eng tez:* **Тезda** (3 daqiqa)
+🏦 *Eng ishonchli:* **ЮMoney** (Yandex)
+"""
+
+        message += f"""
+💡 *Maslahat:* **{best_system['source']}** tavsiya etiladi!
+
+🔄 *Kurslar:* {get_russia_time().strftime('%d.%m.%Y %H:%M')}
+⚠️ *Eslatma:* Kurslar doim o'zgaradi. Ilovada tekshiring!
+"""
+
+        update.message.reply_text(message, parse_mode='Markdown')
+        
+    except Exception as e:
+        update.message.reply_text(f"❌ Xatolik: {str(e)}\n\nIltimos, keyinroq urinib ko'ring.")
